@@ -444,30 +444,116 @@ with st.sidebar:
         "🇬🇧 Λονδίνο (LSE)":      (".L", ["HSBA.L", "BP.L", "SHEL.L", "VOD.L"]),
         "🇯🇵 Τόκιο (TSE)":        (".T", ["7203.T", "6758.T", "9984.T", "8306.T"]),
         "🇦🇺 Σίδνεϊ (ASX)":       (".AX", ["BHP.AX", "CBA.AX", "CSL.AX", "WBC.AX"]),
+        "🛢️ Commodities (εμπορεύματα)": ("LIST:COMMODITY", []),
+        "📈 ETFs / Δείκτες (indices)": ("LIST:ETF", []),
+        "₿ Crypto (κρυπτονομίσματα)": ("LIST:CRYPTO", []),
+        "📜 Bonds (ομόλογα & ETFs)": ("LIST:BONDS", []),
         "✏️ Άλλο / γράφω μόνος μου": (None, []),
+    }
+
+    # Λίστες φιλικών ονομάτων -> σύμβολα Yahoo
+    COMMODITIES = {
+        "🥇 Χρυσός (Gold)": "GC=F",
+        "🥈 Ασήμι (Silver)": "SI=F",
+        "🛢️ Πετρέλαιο WTI (Crude Oil)": "CL=F",
+        "🛢️ Πετρέλαιο Brent": "BZ=F",
+        "🔥 Φυσικό αέριο (Natural Gas)": "NG=F",
+        "🟤 Χαλκός (Copper)": "HG=F",
+        "🪙 Πλατίνα (Platinum)": "PL=F",
+        "🌾 Σιτάρι (Wheat)": "ZW=F",
+        "🌽 Καλαμπόκι (Corn)": "ZC=F",
+        "☕ Καφές (Coffee)": "KC=F",
+    }
+    CRYPTO = {
+        "₿ Bitcoin": "BTC-USD",
+        "Ξ Ethereum": "ETH-USD",
+        "◎ Solana": "SOL-USD",
+        "✕ XRP": "XRP-USD",
+        "🐕 Dogecoin": "DOGE-USD",
+        "🔷 Cardano": "ADA-USD",
+        "🔺 Avalanche": "AVAX-USD",
+        "🔗 Chainlink": "LINK-USD",
+    }
+    BONDS = {
+        "🇺🇸 Απόδοση 10ετούς ΗΠΑ (yield)": "^TNX",
+        "🇺🇸 Απόδοση 30ετούς ΗΠΑ (yield)": "^TYX",
+        "🇺🇸 Απόδοση 5ετούς ΗΠΑ (yield)": "^FVX",
+        "🇺🇸 Απόδοση 13 εβδ. ΗΠΑ (yield)": "^IRX",
+        "📦 TLT — 20+ ετών ΗΠΑ (ETF)": "TLT",
+        "📦 IEF — 7-10 ετών ΗΠΑ (ETF)": "IEF",
+        "📦 SHY — 1-3 ετών ΗΠΑ (ETF)": "SHY",
+        "📦 AGG — Σύνολο αγοράς ομολόγων (ETF)": "AGG",
+        "📦 LQD — Εταιρικά ομόλογα (ETF)": "LQD",
+        "📦 HYG — Ομόλογα υψηλής απόδοσης (ETF)": "HYG",
+    }
+    ETFS = {
+        "🇺🇸 SPY — S&P 500 (ΗΠΑ)": "SPY",
+        "🇺🇸 VOO — S&P 500 (Vanguard)": "VOO",
+        "🇺🇸 IVV — S&P 500 (iShares)": "IVV",
+        "🇺🇸 QQQ — Nasdaq 100 (τεχνολογία)": "QQQ",
+        "🇺🇸 DIA — Dow Jones 30": "DIA",
+        "🇺🇸 IWM — Russell 2000 (μικρές εταιρ.)": "IWM",
+        "🇺🇸 VTI — Σύνολο αγοράς ΗΠΑ": "VTI",
+        "🌍 VT — Όλος ο κόσμος (Vanguard)": "VT",
+        "🌍 VWCE.DE — FTSE All-World (EU/€)": "VWCE.DE",
+        "🇪🇺 VUAA.DE — S&P 500 (EU/€, acc)": "VUAA.DE",
+        "🇬🇧 VUAA.L — S&P 500 (Λονδίνο)": "VUAA.L",
+        "🇪🇺 CSPX.L — S&P 500 (iShares, €)": "CSPX.L",
+        "🇪🇺 EUNL.DE — MSCI World (iShares)": "EUNL.DE",
+        "🌏 EEM — Αναδυόμενες αγορές": "EEM",
+        "🇪🇺 EZU — Ευρωζώνη": "EZU",
+        "📊 ^GSPC — Δείκτης S&P 500 (raw)": "^GSPC",
+        "📊 ^NDX — Δείκτης Nasdaq 100 (raw)": "^NDX",
+        "📊 ^DJI — Δείκτης Dow Jones (raw)": "^DJI",
+        "📊 ^GDAXI — Δείκτης DAX Γερμανίας": "^GDAXI",
+        "📊 GD.AT — Γενικός Δείκτης Χ.Α.": "GD.AT",
+    }
+    PICK_LISTS = {
+        "LIST:COMMODITY": ("εμπόρευμα", COMMODITIES,
+                           "Τα εμπορεύματα δεν έχουν θεμελιώδη — μόνο τεχνική ανάλυση."),
+        "LIST:ETF": ("ETF / δείκτη", ETFS,
+                     "Τα ETFs «καλάθια» πολλών μετοχών. Τα ^ είναι δείκτες (indices). Δουλεύει πλήρως η τεχνική ανάλυση."),
+        "LIST:CRYPTO": ("κρυπτονόμισμα", CRYPTO,
+                        "Τα κρυπτονομίσματα δεν έχουν θεμελιώδη — μόνο τεχνική ανάλυση. Προσοχή: πολύ υψηλή μεταβλητότητα."),
+        "LIST:BONDS": ("ομόλογο / ETF", BONDS,
+                       "Τα yields (^) δείχνουν απόδοση· τα ETFs (📦) διαπραγματεύονται σαν μετοχές."),
     }
 
     market = st.selectbox("Αγορά / Χρηματιστήριο", list(MARKETS.keys()), index=0)
     suffix, examples = MARKETS[market]
 
-    raw = st.text_input(
-        "Σύμβολο μετοχής",
-        value=examples[0] if examples else "AAPL",
-        help="Γράψε μόνο το σύμβολο — η κατάληξη της αγοράς προστίθεται αυτόματα.",
-    ).strip().upper()
+    if suffix in PICK_LISTS:
+        kind_label, pick_dict, note = PICK_LISTS[suffix]
+        choice = st.selectbox(f"Διάλεξε {kind_label}", list(pick_dict.keys()), index=0)
+        ticker = pick_dict[choice]
+        st.caption(note)
+    else:
+        is_manual = suffix is None
+        raw = st.text_input(
+            "Σύμβολο" if is_manual else "Σύμβολο μετοχής",
+            value=examples[0] if examples else "AAPL",
+            help=("Γράψε οποιοδήποτε σύμβολο του Yahoo Finance: μετοχή, ETF, index, "
+                  "futures — με τη σωστή κατάληξη αγοράς αν χρειάζεται."
+                  if is_manual else
+                  "Γράψε μόνο το σύμβολο — η κατάληξη της αγοράς προστίθεται αυτόματα."),
+        ).strip().upper()
 
-    # Αυτόματη προσθήκη κατάληξης (αν δεν την έχει ήδη γράψει ο χρήστης)
-    if suffix and raw and not raw.endswith(suffix):
-        # αν έγραψε ήδη κάποια άλλη κατάληξη (π.χ. .DE) σεβόμαστε αυτό που έγραψε
-        if "." not in raw:
-            ticker = raw + suffix
+        # Αυτόματη προσθήκη κατάληξης (αν δεν την έχει ήδη γράψει ο χρήστης)
+        if suffix and raw and not raw.endswith(suffix):
+            # αν έγραψε ήδη κάποια άλλη κατάληξη (π.χ. .DE) σεβόμαστε αυτό που έγραψε
+            if "." not in raw:
+                ticker = raw + suffix
+            else:
+                ticker = raw
         else:
             ticker = raw
-    else:
-        ticker = raw
 
-    if examples:
-        st.caption("Δημοφιλή: " + " · ".join(examples))
+        if is_manual:
+            st.caption("💡 Εδώ μπορείς να αναλύσεις **οτιδήποτε** υπάρχει στο Yahoo Finance — "
+                       "οποιαδήποτε μετοχή, ETF ή δείκτη στον κόσμο.")
+
+        if examples:
+            st.caption("Δημοφιλή: " + " · ".join(examples))
 
     period = st.selectbox(
         "Χρονικό διάστημα",
@@ -649,7 +735,7 @@ if analyze or ticker:
         # ===== TAB 3: Θεμελιώδη =====
         with tab_fund:
             if not info:
-                st.warning("Δεν υπάρχουν διαθέσιμα θεμελιώδη (πιθανώς ETF/index ή μη εταιρεία).")
+                st.warning("Δεν υπάρχουν θεμελιώδη στοιχεία (εμπόρευμα, κρυπτονόμισμα, ETF ή index — όχι εταιρεία). Η τεχνική ανάλυση όμως ισχύει κανονικά.")
             else:
                 f1, f2, f3 = st.columns(3)
                 f1.metric("Market Cap", fmt_num(info.get("marketCap")))
