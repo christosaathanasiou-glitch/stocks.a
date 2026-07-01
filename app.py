@@ -983,23 +983,31 @@ if analyze or ticker:
         with sum_right:
             bhs = buy_hold_sell(trend["score"])
             pie = go.Figure(data=[go.Pie(
-                labels=["Buy (Αγορά)", "Hold (Κράτημα)", "Sell (Πώληση)"],
+                labels=["Buy", "Hold", "Sell"],
                 values=[bhs["Buy"], bhs["Hold"], bhs["Sell"]],
-                hole=0.45,
-                marker=dict(colors=["#1a9850", "#bdbdbd", "#d73027"]),
-                textinfo="label+percent",
+                hole=0.5,
+                marker=dict(colors=["#1a9850", "#bdbdbd", "#d73027"],
+                            line=dict(color="#ffffff", width=2)),
+                textinfo="percent",
+                textposition="outside",
                 textfont=dict(size=13),
                 sort=False,
+                direction="clockwise",
             )])
             # Ποια ετικέτα κυριαρχεί
             dominant = max(bhs, key=bhs.get)
+            dom_label = {"Buy": "Αγορά", "Hold": "Κράτημα", "Sell": "Πώληση"}[dominant]
             dom_color = {"Buy": "#1a9850", "Hold": "#999999", "Sell": "#d73027"}[dominant]
             pie.update_layout(
-                height=300, margin=dict(t=40, b=10, l=10, r=10),
-                showlegend=False, template="plotly_white",
-                title=dict(text="Σήμα ανάλυσης", x=0.5, font=dict(size=15)),
-                annotations=[dict(text=f"<b>{dominant}</b>", x=0.5, y=0.5,
-                                  font=dict(size=18, color=dom_color), showarrow=False)],
+                height=340,
+                margin=dict(t=60, b=60, l=20, r=20),
+                template="plotly_white",
+                title=dict(text="Σήμα ανάλυσης", x=0.5, xanchor="center", y=0.97, font=dict(size=15)),
+                showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=-0.18,
+                            xanchor="center", x=0.5, font=dict(size=12)),
+                annotations=[dict(text=f"<b>{dom_label}</b>", x=0.5, y=0.5,
+                                  font=dict(size=17, color=dom_color), showarrow=False)],
             )
             st.plotly_chart(pie, use_container_width=True)
 
@@ -1021,7 +1029,7 @@ if analyze or ticker:
 
             fig = make_subplots(
                 rows=4, cols=1, shared_xaxes=True,
-                row_heights=[0.5, 0.17, 0.17, 0.16], vertical_spacing=0.03,
+                row_heights=[0.5, 0.17, 0.17, 0.16], vertical_spacing=0.06,
                 subplot_titles=("Τιμή + Bollinger + SMA", "Volume", "RSI", "MACD"),
             )
             # Τιμή: κεριά ή απλή γραμμή, ανάλογα με την επιλογή
@@ -1051,8 +1059,14 @@ if analyze or ticker:
             fig.add_trace(go.Scatter(x=df.index, y=df["MACD"], name="MACD", line=dict(color="#2166ac", width=1)), row=4, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df["MACD_signal"], name="Signal", line=dict(color="#f1a340", width=1)), row=4, col=1)
 
-            fig.update_layout(height=820, template="plotly_white", xaxis_rangeslider_visible=False,
-                              legend=dict(orientation="h", y=1.04), margin=dict(t=60, b=20))
+            fig.update_layout(
+                height=860, template="plotly_white", xaxis_rangeslider_visible=False,
+                legend=dict(orientation="h", yanchor="bottom", y=1.06,
+                            xanchor="center", x=0.5, font=dict(size=11)),
+                margin=dict(t=95, b=25),
+            )
+            # Μικρότερη γραμματοσειρά για τους τίτλους των υπο-γραφημάτων ώστε να μην πατάνε
+            fig.update_annotations(font_size=13)
             st.plotly_chart(fig, use_container_width=True)
 
         # ===== TAB 2: Τεχνικά σήματα =====
