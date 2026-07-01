@@ -624,6 +624,38 @@ def load_stock(ticker: str, period: str):
     return hist, info, cashflow, "ok"
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_news(ticker: str, limit: int = 6):
+    """Πρόσφατες ειδήσεις για το σύμβολο μέσω yfinance. Cache 30 λεπτά."""
+    items = []
+    try:
+        raw = yf.Ticker(ticker).news or []
+    except Exception:
+        raw = []
+    for art in raw[:limit]:
+        # Το yfinance επιστρέφει είτε επίπεδα κλειδιά είτε μέσα σε 'content'
+        content = art.get("content", art) if isinstance(art, dict) else {}
+        title = content.get("title") or art.get("title")
+        if not title:
+            continue
+        # Πηγή
+        provider = ""
+        prov = content.get("provider") or {}
+        if isinstance(prov, dict):
+            provider = prov.get("displayName", "")
+        provider = provider or art.get("publisher", "")
+        # Σύνδεσμος
+        link = ""
+        cu = content.get("canonicalUrl") or content.get("clickThroughUrl") or {}
+        if isinstance(cu, dict):
+            link = cu.get("url", "")
+        link = link or art.get("link", "")
+        # Ημερομηνία
+        pub = content.get("pubDate") or art.get("providerPublishTime", "")
+        items.append({"title": title, "provider": provider, "link": link, "pub": pub})
+    return items
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_macro():
     """Μακρο-υπόβαθρο μέσω yfinance (χωρίς FRED key): 10Y yield, VIX, DXY."""
@@ -649,12 +681,16 @@ FOMC_DATES = [
     "2025-07-30", "2025-09-17", "2025-10-29", "2025-12-10",
     "2026-01-28", "2026-03-18", "2026-04-29", "2026-06-17",
     "2026-07-29", "2026-09-16", "2026-11-04", "2026-12-16",
+    "2027-01-27", "2027-03-17", "2027-04-28", "2027-06-16",
+    "2027-07-28", "2027-09-22", "2027-11-03", "2027-12-15",
 ]
 ECB_DATES = [
     "2025-01-30", "2025-03-06", "2025-04-17", "2025-06-05",
     "2025-07-24", "2025-09-11", "2025-10-30", "2025-12-18",
     "2026-01-29", "2026-03-12", "2026-04-16", "2026-06-04",
     "2026-07-23", "2026-09-10", "2026-10-29", "2026-12-17",
+    "2027-02-04", "2027-03-18", "2027-04-22", "2027-06-10",
+    "2027-07-22", "2027-09-09", "2027-10-28", "2027-12-16",
 ]
 
 
@@ -662,6 +698,56 @@ def next_meeting(dates):
     today = dt.date.today()
     upcoming = [dt.date.fromisoformat(d) for d in dates if dt.date.fromisoformat(d) >= today]
     return min(upcoming) if upcoming else None
+
+
+# ----------------------------------------------------------------------------
+# ΓΕΓΟΝΟΤΑ ΥΨΗΛΗΣ ΕΠΙΡΡΟΗΣ (σταθερές ημερομηνίες + εξήγηση επιρροής)
+# Δεν προβλέπουμε την αντίδραση — εξηγούμε ΤΙ ΝΑ ΠΡΟΣΕΞΕΙΣ σε κάθε τύπο γεγονότος.
+# ----------------------------------------------------------------------------
+def build_upcoming_events():
+    """Συνθέτει λίστα επερχόμενων γεγονότων υψηλής επιρροής, ταξινομημένη κατά ημερομηνία."""
+    events = []
+    for d in FOMC_DATES:
+        events.append({
+            "date": d, "flag": "🇺🇸", "name": "FOMC — Απόφαση επιτοκίων Fed",
+            "impact": "Πολύ υψηλή",
+            "affects": "Μετοχές (ιδίως τεχνολογία), χρυσός, δολάριο, ομόλογα",
+            "note": ("Αν η Fed είναι πιο «γερακίσια» από το αναμενόμενο (υψηλότερα επιτόκια ή "
+                     "αυστηρό μήνυμα), ιστορικά πιέζονται μετοχές & χρυσός και ενισχύεται το δολάριο. "
+                     "Αν είναι πιο «περιστερίστικη» (χαμηλότερα επιτόκια/χαλαρό μήνυμα), συνήθως συμβαίνει "
+                     "το αντίστροφο. Σημασία έχει η απόκλιση από την πρόβλεψη, όχι το ίδιο το νούμερο."),
+        })
+    for d in ECB_DATES:
+        events.append({
+            "date": d, "flag": "🇪🇺", "name": "ΕΚΤ — Απόφαση επιτοκίων",
+            "impact": "Υψηλή",
+            "affects": "Ευρωπαϊκές & ελληνικές μετοχές, ευρώ, ευρωπαϊκά ομόλογα",
+            "note": ("Επηρεάζει άμεσα τραπεζικές & ευρωπαϊκές μετοχές. Υψηλότερα επιτόκια από το "
+                     "αναμενόμενο συνήθως βοηθούν τις τράπεζες αλλά πιέζουν εταιρείες με χρέος και το "
+                     "ευρύτερο κλίμα ρίσκου."),
+        })
+    # Ταξινόμηση & κράτημα μόνο των μελλοντικών
+    today = dt.date.today()
+    events = [e for e in events if dt.date.fromisoformat(e["date"]) >= today]
+    events.sort(key=lambda e: e["date"])
+    return events
+
+
+# Επαναλαμβανόμενα γεγονότα υψηλής επιρροής (τι να προσέχεις — γενική εξήγηση)
+RECURRING_EVENTS_INFO = [
+    ("📊 Ανακοίνωση Πληθωρισμού (CPI) ΗΠΑ", "Μηνιαία",
+     "Ένα από τα πιο κρίσιμα νούμερα. Υψηλότερος πληθωρισμός από το αναμενόμενο → φόβος για "
+     "υψηλότερα επιτόκια → πίεση σε μετοχές. Χαμηλότερος → ανακούφιση για τις αγορές."),
+    ("💼 Μη-αγροτική απασχόληση (NFP) ΗΠΑ", "1η Παρασκευή κάθε μήνα",
+     "Δείχνει την υγεία της αγοράς εργασίας. Πολύ ισχυρά στοιχεία μπορεί παραδόξως να πιέσουν "
+     "μετοχές (φόβος για υψηλότερα επιτόκια), πολύ αδύναμα φοβίζουν για ύφεση."),
+    ("🏢 Σεζόν αποτελεσμάτων (Earnings)", "Κάθε τρίμηνο",
+     "Οι εταιρείες ανακοινώνουν κέρδη. Τα αποτελέσματα vs οι προβλέψεις αναλυτών κινούν έντονα "
+     "τη συγκεκριμένη μετοχή — δες την ημερομηνία earnings στην καρτέλα «Θεμελιώδη»."),
+    ("🛢️ Αποθέματα πετρελαίου (EIA)", "Κάθε Τετάρτη",
+     "Επηρεάζει έντονα το πετρέλαιο & τις ενεργειακές μετοχές. Μεγαλύτερα αποθέματα από το "
+     "αναμενόμενο συνήθως ρίχνουν την τιμή του πετρελαίου."),
+]
 
 
 # ----------------------------------------------------------------------------
@@ -920,8 +1006,8 @@ if analyze or ticker:
         st.divider()
 
         # --- Tabs ---
-        tab_chart, tab_tech, tab_fund, tab_macro = st.tabs(
-            ["📊 Γράφημα", "🔧 Τεχνικά σήματα", "🏢 Θεμελιώδη", "🌍 Μακρο & Συνεδριάσεις"]
+        tab_chart, tab_tech, tab_fund, tab_news, tab_macro = st.tabs(
+            ["📊 Γράφημα", "🔧 Τεχνικά σήματα", "🏢 Θεμελιώδη", "📰 Ειδήσεις", "🌍 Μακρο & Γεγονότα"]
         )
 
         # ===== TAB 1: Γράφημα =====
@@ -1037,6 +1123,44 @@ if analyze or ticker:
                         st.write(summary)
 
         # ===== TAB 4: Μακρο & Συνεδριάσεις =====
+        # ===== TAB 4: Ειδήσεις =====
+        with tab_news:
+            st.subheader(f"📰 Πρόσφατες ειδήσεις — {ticker}")
+            news = load_news(ticker)
+            if not news:
+                st.info("Δεν βρέθηκαν πρόσφατες ειδήσεις για αυτό το σύμβολο αυτή τη στιγμή. "
+                        "Τα εμπορεύματα, δείκτες και μερικές μη-αμερικανικές μετοχές συχνά έχουν λιγότερες ή καθόλου ειδήσεις στο Yahoo.")
+            else:
+                for n in news:
+                    # Ημερομηνία σε αναγνώσιμη μορφή
+                    when = ""
+                    pub = n.get("pub", "")
+                    try:
+                        if isinstance(pub, (int, float)):
+                            when = dt.datetime.fromtimestamp(pub).strftime("%d %b %Y")
+                        elif isinstance(pub, str) and pub:
+                            when = pub[:10]
+                    except Exception:
+                        when = ""
+                    title = n["title"]
+                    provider = n.get("provider", "")
+                    link = n.get("link", "")
+                    meta = " · ".join([x for x in [provider, when] if x])
+                    if link:
+                        st.markdown(
+                            f"<div style='padding:12px 16px;margin-bottom:10px;border-radius:10px;"
+                            f"background:#e2e5ea;border-left:3px solid #2166ac'>"
+                            f"<a href='{link}' target='_blank' style='font-weight:700;color:#111;"
+                            f"text-decoration:none;font-size:1.02rem'>{title}</a>"
+                            f"<div style='margin-top:5px;color:#555;font-size:0.85rem'>{meta} ↗</div></div>",
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.markdown(f"**{title}**  \n<span style='color:#666;font-size:0.85rem'>{meta}</span>",
+                                    unsafe_allow_html=True)
+            st.caption("Πηγή: Yahoo Finance. Οι ειδήσεις ανοίγουν σε νέα καρτέλα.")
+
+        # ===== TAB 5: Μακρο & Γεγονότα =====
         with tab_macro:
             st.subheader("Μακροοικονομικό υπόβαθρο")
             macro = load_macro()
@@ -1047,20 +1171,40 @@ if analyze or ticker:
             st.caption("10Y yield ↑ → πίεση σε μετοχές · VIX ↑ → φόβος/μεταβλητότητα · DXY ↑ → ισχυρό δολάριο")
 
             st.divider()
-            st.subheader("📅 Επόμενες συνεδριάσεις κεντρικών τραπεζών")
-            nfomc = next_meeting(FOMC_DATES)
-            necb = next_meeting(ECB_DATES)
-            mc1, mc2 = st.columns(2)
-            if nfomc:
-                days = (nfomc - dt.date.today()).days
-                mc1.metric("🇺🇸 Επόμενη FOMC (Fed)", nfomc.strftime("%d %b %Y"), f"σε {days} ημέρες")
-            if necb:
-                days = (necb - dt.date.today()).days
-                mc2.metric("🇪🇺 Επόμενη ΕΚΤ (ECB)", necb.strftime("%d %b %Y"), f"σε {days} ημέρες")
+            st.subheader("📅 Επερχόμενα γεγονότα υψηλής επιρροής")
+            events = build_upcoming_events()
+            today = dt.date.today()
+            if events:
+                for e in events[:6]:
+                    edate = dt.date.fromisoformat(e["date"])
+                    days = (edate - today).days
+                    when_txt = "σήμερα" if days == 0 else ("αύριο" if days == 1 else f"σε {days} ημέρες")
+                    st.markdown(
+                        f"<div style='padding:12px 16px;margin-bottom:10px;border-radius:10px;"
+                        f"background:#e2e5ea;border-left:3px solid #b2182b'>"
+                        f"<div style='display:flex;justify-content:space-between'>"
+                        f"<span style='font-weight:700;color:#111'>{e['flag']} {e['name']}</span>"
+                        f"<span style='color:#b2182b;font-weight:700'>{edate.strftime('%d %b %Y')} · {when_txt}</span></div>"
+                        f"<div style='margin-top:4px;font-size:0.85rem;color:#444'>"
+                        f"Επιρροή: <b>{e['impact']}</b> · Επηρεάζει: {e['affects']}</div>"
+                        f"<div style='margin-top:6px;color:#333;line-height:1.5'>{e['note']}</div></div>",
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.caption("Δεν υπάρχουν προγραμματισμένες συνεδριάσεις στο ημερολόγιο.")
+            st.caption("ℹ️ Οι ημερομηνίες του 2025-2026 είναι επίσημες· του 2027 είναι ενδεικτικές (ανακοινώνονται επίσημα ~1 χρόνο πριν).")
+
+            st.divider()
+            st.subheader("🔁 Επαναλαμβανόμενα γεγονότα που κινούν τις αγορές")
+            st.caption("Δεν έχουν σταθερή ημερομηνία εδώ, αλλά αξίζει να τα προσέχεις κάθε μήνα:")
+            for name, freq, note in RECURRING_EVENTS_INFO:
+                with st.expander(f"{name}  ({freq})"):
+                    st.write(note)
+
             st.info(
-                "Οι συνεδριάσεις κεντρικών τραπεζών συχνά αυξάνουν τη μεταβλητότητα. "
-                "Αν πλησιάζει συνεδρίαση, οι αποφάσεις επιτοκίων μπορεί να επηρεάσουν έντονα την αγορά "
-                "ανεξάρτητα από τα τεχνικά σήματα της μετοχής."
+                "⚠️ Σημαντικό: κανείς δεν ξέρει εκ των προτέρων αν ένα γεγονός θα κινήσει τη μετοχή θετικά "
+                "ή αρνητικά — αυτό εξαρτάται από το αν το αποτέλεσμα θα είναι καλύτερο ή χειρότερο από την "
+                "πρόβλεψη της αγοράς. Οι παραπάνω εξηγήσεις δείχνουν τι να προσέχεις, όχι τι θα συμβεί."
             )
 
     except Exception as e:
