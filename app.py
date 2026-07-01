@@ -77,17 +77,102 @@ def bollinger(series: pd.Series, window: int = 20, num_std: float = 2.0):
     return mid, upper, lower
 
 
+def stochastic(df: pd.DataFrame, k: int = 14, d: int = 3):
+    """Stochastic Oscillator (%K, %D) — 0-100, δείχνει υπεραγορά/υπερπώληση."""
+    low_k = df["Low"].rolling(k).min()
+    high_k = df["High"].rolling(k).max()
+    pct_k = 100 * (df["Close"] - low_k) / (high_k - low_k)
+    pct_d = pct_k.rolling(d).mean()
+    return pct_k, pct_d
+
+
+def adx(df: pd.DataFrame, window: int = 14):
+    """Average Directional Index — δύναμη τάσης (0-100, >25 = ισχυρή τάση)."""
+    high, low, close = df["High"], df["Low"], df["Close"]
+    up = high.diff()
+    down = -low.diff()
+    plus_dm = np.where((up > down) & (up > 0), up, 0.0)
+    minus_dm = np.where((down > up) & (down > 0), down, 0.0)
+    prev_close = close.shift(1)
+    tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+    atr_ = tr.ewm(alpha=1 / window, min_periods=window, adjust=False).mean()
+    plus_di = 100 * pd.Series(plus_dm, index=df.index).ewm(alpha=1 / window, min_periods=window, adjust=False).mean() / atr_
+    minus_di = 100 * pd.Series(minus_dm, index=df.index).ewm(alpha=1 / window, min_periods=window, adjust=False).mean() / atr_
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
+    adx_ = dx.ewm(alpha=1 / window, min_periods=window, adjust=False).mean()
+    return adx_, plus_di, minus_di
+
+
+def obv(df: pd.DataFrame) -> pd.Series:
+    """On-Balance Volume — αθροιστικός όγκος ανάλογα με άνοδο/πτώση."""
+    direction = np.sign(df["Close"].diff()).fillna(0)
+    return (direction * df["Volume"]).fillna(0).cumsum()
+
+
+def cci(df: pd.DataFrame, window: int = 20) -> pd.Series:
+    """Commodity Channel Index — απόκλιση από τον μέσο (±100 όρια)."""
+    tp = (df["High"] + df["Low"] + df["Close"]) / 3
+    ma = tp.rolling(window).mean()
+    md = (tp - ma).abs().rolling(window).mean()
+    return (tp - ma) / (0.015 * md)
+
+
+def williams_r(df: pd.DataFrame, window: int = 14) -> pd.Series:
+    """Williams %R — υπεραγορά/υπερπώληση (-100 έως 0)."""
+    high = df["High"].rolling(window).max()
+    low = df["Low"].rolling(window).min()
+    return -100 * (high - df["Close"]) / (high - low)
+
+
+def roc(series: pd.Series, window: int = 12) -> pd.Series:
+    """Rate of Change — ποσοστιαία μεταβολή τιμής (momentum)."""
+    return (series - series.shift(window)) / series.shift(window) * 100
+
+
+def mfi(df: pd.DataFrame, window: int = 14) -> pd.Series:
+    """Money Flow Index — «RSI με όγκο» (0-100)."""
+    tp = (df["High"] + df["Low"] + df["Close"]) / 3
+    mf = tp * df["Volume"]
+    pos = mf.where(tp > tp.shift(1), 0.0)
+    neg = mf.where(tp < tp.shift(1), 0.0)
+    pos_sum = pos.rolling(window).sum()
+    neg_sum = neg.rolling(window).sum()
+    mfr = pos_sum / neg_sum
+    return 100 - (100 / (1 + mfr))
+
+
+def cmf(df: pd.DataFrame, window: int = 20) -> pd.Series:
+    """Chaikin Money Flow — πίεση αγοράς/πώλησης μέσω όγκου (-1 έως +1)."""
+    rng = (df["High"] - df["Low"]).replace(0, np.nan)
+    mfm = ((df["Close"] - df["Low"]) - (df["High"] - df["Close"])) / rng
+    mfv = mfm * df["Volume"]
+    return mfv.rolling(window).sum() / df["Volume"].rolling(window).sum()
+
+
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """Προσθέτει όλους τους δείκτες σε ένα DataFrame OHLCV."""
     out = df.copy()
     close = out["Close"]
+    # Μέσοι όροι & βασικοί
     out["SMA50"] = sma(close, 50)
     out["SMA200"] = sma(close, 200)
     out["MA20"] = sma(close, 20)
+    out["EMA20"] = ema(close, 20)
     out["RSI"] = rsi(close, 14)
     out["ATR"] = atr(out, 14)
     out["MACD"], out["MACD_signal"], out["MACD_hist"] = macd(close)
     out["BB_mid"], out["BB_up"], out["BB_low"] = bollinger(close)
+    # Επιπλέον δείκτες (για πιο ακριβή ανάλυση)
+    out["STOCH_K"], out["STOCH_D"] = stochastic(out)
+    out["ADX"], out["DI_plus"], out["DI_minus"] = adx(out)
+    out["OBV"] = obv(out)
+    out["OBV_ema"] = ema(out["OBV"], 20)
+    out["CCI"] = cci(out)
+    out["WILLR"] = williams_r(out)
+    out["ROC"] = roc(close, 12)
+    out["MFI"] = mfi(out)
+    out["CMF"] = cmf(out)
+    out["VOL_avg"] = sma(out["Volume"], 20)
     return out
 
 
@@ -140,6 +225,69 @@ def trend_analysis(df: pd.DataFrame) -> dict:
         elif last["Close"] < last["BB_low"]:
             score += 5; signals.append(("Κάτω από BB", "bullish", "Πιθανό oversold"))
 
+    # 6. ADX — δύναμη τάσης (ενισχύει την κατεύθυνση των DI)
+    if not np.isnan(last.get("ADX", np.nan)):
+        if last["ADX"] > 25:
+            if last["DI_plus"] > last["DI_minus"]:
+                score += 12; signals.append((f"ADX {last['ADX']:.0f}", "bullish", "Ισχυρή ανοδική τάση"))
+            else:
+                score -= 12; signals.append((f"ADX {last['ADX']:.0f}", "bearish", "Ισχυρή καθοδική τάση"))
+
+    # 7. Stochastic
+    if not np.isnan(last.get("STOCH_K", np.nan)):
+        k = last["STOCH_K"]
+        if k > 80:
+            score -= 6; signals.append((f"Stochastic {k:.0f}", "bearish", "Υπεραγορασμένη ζώνη"))
+        elif k < 20:
+            score += 6; signals.append((f"Stochastic {k:.0f}", "bullish", "Υπερπουλημένη ζώνη"))
+
+    # 8. MFI (money flow)
+    if not np.isnan(last.get("MFI", np.nan)):
+        m = last["MFI"]
+        if m > 80:
+            score -= 5; signals.append((f"MFI {m:.0f}", "bearish", "Υπερβολική εισροή χρήματος"))
+        elif m < 20:
+            score += 5; signals.append((f"MFI {m:.0f}", "bullish", "Υπερβολική εκροή — πιθανή ανάκαμψη"))
+
+    # 9. CCI
+    if not np.isnan(last.get("CCI", np.nan)):
+        c = last["CCI"]
+        if c > 100:
+            score += 4; signals.append((f"CCI {c:.0f}", "bullish", "Ισχυρή ανοδική ορμή"))
+        elif c < -100:
+            score -= 4; signals.append((f"CCI {c:.0f}", "bearish", "Ισχυρή καθοδική ορμή"))
+
+    # 10. Williams %R
+    if not np.isnan(last.get("WILLR", np.nan)):
+        w = last["WILLR"]
+        if w > -20:
+            score -= 4; signals.append((f"Williams %R {w:.0f}", "bearish", "Υπεραγορασμένη"))
+        elif w < -80:
+            score += 4; signals.append((f"Williams %R {w:.0f}", "bullish", "Υπερπουλημένη"))
+
+    # 11. ROC (momentum)
+    if not np.isnan(last.get("ROC", np.nan)):
+        rc = last["ROC"]
+        if rc > 0:
+            score += 4; signals.append((f"ROC {rc:+.1f}%", "bullish", "Θετική ορμή τιμής"))
+        else:
+            score -= 4; signals.append((f"ROC {rc:+.1f}%", "bearish", "Αρνητική ορμή τιμής"))
+
+    # 12. OBV vs EMA (τάση όγκου)
+    if not np.isnan(last.get("OBV", np.nan)) and not np.isnan(last.get("OBV_ema", np.nan)):
+        if last["OBV"] > last["OBV_ema"]:
+            score += 5; signals.append(("OBV ανοδικό", "bullish", "Ο όγκος στηρίζει την άνοδο"))
+        else:
+            score -= 5; signals.append(("OBV καθοδικό", "bearish", "Ο όγκος στηρίζει την πτώση"))
+
+    # 13. CMF (Chaikin money flow)
+    if not np.isnan(last.get("CMF", np.nan)):
+        cm = last["CMF"]
+        if cm > 0.05:
+            score += 4; signals.append(("CMF θετικό", "bullish", "Πίεση αγοράς"))
+        elif cm < -0.05:
+            score -= 4; signals.append(("CMF αρνητικό", "bearish", "Πίεση πώλησης"))
+
     score = max(-100, min(100, score))
     if score >= 40:
         verdict, color = "ΙΣΧΥΡΑ ΑΝΟΔΙΚΗ", "#1a9850"
@@ -191,117 +339,216 @@ def simple_explanation(trend: dict, last) -> str:
     return story + rsi_note
 
 
-def explain_indicators(last, df) -> list:
-    """Επιστρέφει λίστα από (τίτλος, τιμή, εξήγηση σε απλά λόγια) για κάθε δείκτη."""
-    items = []
-    close = last["Close"]
+def _all_indicator_explanations(last, close) -> list:
+    """Χτίζει εξήγηση για ΚΑΘΕ δείκτη μαζί με βαθμό σημαντικότητας (0-10).
+    Επιστρέφει λίστα από dicts: {title, value, text, importance, kind}.
+    Όσο πιο ακραίο/καθαρό το σήμα ενός δείκτη, τόσο μεγαλύτερη η σημαντικότητα,
+    ώστε να επιλέγονται αυτόματα οι πιο κρίσιμοι για τη συγκεκριμένη αγορά."""
+    out = []
+
+    def add(title, value, text, importance, kind="neutral"):
+        out.append({"title": title, "value": value, "text": text,
+                    "importance": importance, "kind": kind})
 
     # --- RSI ---
-    r = last["RSI"]
-    if np.isnan(r):
-        rsi_txt = "Δεν υπάρχουν αρκετά δεδομένα ακόμα."
-    elif r > 70:
-        rsi_txt = (f"Το RSI είναι {r:.0f}, δηλαδή πάνω από 70. Αυτό λέγεται «υπεραγορασμένη»: "
-                   "η μετοχή ανέβηκε πολύ γρήγορα και ίσως χρειαστεί ξεκούραση ή μικρή πτώση. "
-                   "Σκέψου το σαν δρομέα που έτρεξε πολύ δυνατά και λαχανιάζει.")
-    elif r < 30:
-        rsi_txt = (f"Το RSI είναι {r:.0f}, δηλαδή κάτω από 30. Αυτό λέγεται «υπερπουλημένη»: "
-                   "η μετοχή έπεσε πολύ και ίσως είναι έτοιμη να ανακάμψει. "
-                   "Σαν ελατήριο που πιέστηκε πολύ και θέλει να πεταχτεί πάνω.")
-    elif r >= 50:
-        rsi_txt = (f"Το RSI είναι {r:.0f}, δηλαδή λίγο πάνω από τη μέση (50). "
-                   "Δείχνει ότι οι αγοραστές έχουν ένα ελαφρύ προβάδισμα — υγιές, χωρίς υπερβολές.")
-    else:
-        rsi_txt = (f"Το RSI είναι {r:.0f}, δηλαδή λίγο κάτω από τη μέση (50). "
-                   "Δείχνει ότι οι πωλητές έχουν ένα ελαφρύ προβάδισμα, αλλά τίποτα ακραίο.")
-    items.append(("RSI (δείκτης δύναμης)", f"{r:.0f}" if not np.isnan(r) else "—", rsi_txt))
+    r = last.get("RSI", np.nan)
+    if not np.isnan(r):
+        if r > 70:
+            add("RSI (δείκτης δύναμης)", f"{r:.0f}",
+                f"Το RSI είναι {r:.0f}, πάνω από 70 («υπεραγορασμένη»): ανέβηκε πολύ γρήγορα και "
+                "ίσως χρειαστεί ξεκούραση ή μικρή πτώση. Σαν δρομέα που λαχανιάζει.", 9, "bearish")
+        elif r < 30:
+            add("RSI (δείκτης δύναμης)", f"{r:.0f}",
+                f"Το RSI είναι {r:.0f}, κάτω από 30 («υπερπουλημένη»): έπεσε πολύ και ίσως είναι "
+                "έτοιμη να ανακάμψει. Σαν ελατήριο που πιέστηκε και θέλει να πεταχτεί.", 9, "bullish")
+        elif r >= 50:
+            add("RSI (δείκτης δύναμης)", f"{r:.0f}",
+                f"Το RSI είναι {r:.0f}, λίγο πάνω από τη μέση (50): οι αγοραστές έχουν ελαφρύ "
+                "προβάδισμα — υγιές, χωρίς υπερβολές.", 4, "bullish")
+        else:
+            add("RSI (δείκτης δύναμης)", f"{r:.0f}",
+                f"Το RSI είναι {r:.0f}, λίγο κάτω από τη μέση (50): οι πωλητές έχουν ελαφρύ "
+                "προβάδισμα, αλλά τίποτα ακραίο.", 4, "bearish")
 
     # --- SMA50 vs SMA200 ---
-    s50, s200 = last["SMA50"], last["SMA200"]
-    if np.isnan(s50) or np.isnan(s200):
-        sma_txt = ("Χρειάζονται περισσότερα δεδομένα για τους μέσους όρους (ο SMA200 θέλει "
-                   "200 ημέρες). Διάλεξε μεγαλύτερο χρονικό διάστημα (π.χ. 1 έτος) για να εμφανιστούν.")
-        sma_val = "—"
-    elif s50 > s200:
-        sma_txt = (f"Ο μέσος όρος 50 ημερών ({s50:.2f}) είναι πάνω από τον μέσο όρο 200 ημερών "
-                   f"({s200:.2f}). Αυτό λέγεται «golden cross» και θεωρείται καλό σημάδι: "
-                   "η πρόσφατη πορεία είναι καλύτερη από τη μακροχρόνια, δηλαδή ανοδική τάση.")
-        sma_val = "Ανοδική"
-    else:
-        sma_txt = (f"Ο μέσος όρος 50 ημερών ({s50:.2f}) είναι κάτω από τον μέσο όρο 200 ημερών "
-                   f"({s200:.2f}). Αυτό λέγεται «death cross» και θεωρείται προειδοποίηση: "
-                   "η πρόσφατη πορεία είναι χειρότερη από τη μακροχρόνια, δηλαδή καθοδική τάση.")
-        sma_val = "Καθοδική"
-    items.append(("Μέσοι όροι (SMA50 vs SMA200)", sma_val, sma_txt))
+    s50, s200 = last.get("SMA50", np.nan), last.get("SMA200", np.nan)
+    if not (np.isnan(s50) or np.isnan(s200)):
+        gap = abs(s50 - s200) / s200 * 100 if s200 else 0
+        imp = 8 if gap > 3 else 6
+        if s50 > s200:
+            add("Μέσοι όροι (SMA50 vs SMA200)", "Ανοδική",
+                f"Ο μέσος όρος 50 ημερών ({s50:.2f}) είναι πάνω από τον 200 ημερών ({s200:.2f}) — "
+                "«golden cross», δηλαδή ανοδική τάση: η πρόσφατη πορεία είναι καλύτερη από τη μακροχρόνια.",
+                imp, "bullish")
+        else:
+            add("Μέσοι όροι (SMA50 vs SMA200)", "Καθοδική",
+                f"Ο μέσος όρος 50 ημερών ({s50:.2f}) είναι κάτω από τον 200 ημερών ({s200:.2f}) — "
+                "«death cross», δηλαδή καθοδική τάση: η πρόσφατη πορεία είναι χειρότερη από τη μακροχρόνια.",
+                imp, "bearish")
 
     # --- Τιμή vs SMA200 ---
     if not np.isnan(s200):
         if close > s200:
-            p200_txt = (f"Η τιμή ({close:.2f}) είναι πάνω από τον μέσο όρο 200 ημερών ({s200:.2f}). "
-                        "Σε γενικές γραμμές, όταν η τιμή είναι πάνω από αυτή τη γραμμή, η μετοχή "
-                        "θεωρείται ότι βρίσκεται σε μακροπρόθεσμα ανοδικό «κλίμα».")
+            add("Τιμή σε σχέση με SMA200", "Πάνω",
+                f"Η τιμή ({close:.2f}) είναι πάνω από τον μέσο όρο 200 ημερών ({s200:.2f}): "
+                "μακροπρόθεσμα ανοδικό «κλίμα».", 7, "bullish")
         else:
-            p200_txt = (f"Η τιμή ({close:.2f}) είναι κάτω από τον μέσο όρο 200 ημερών ({s200:.2f}). "
-                        "Όταν η τιμή είναι κάτω από αυτή τη γραμμή, η μετοχή θεωρείται ότι βρίσκεται "
-                        "σε μακροπρόθεσμα καθοδικό «κλίμα».")
-        items.append(("Τιμή σε σχέση με SMA200", "Πάνω" if close > s200 else "Κάτω", p200_txt))
+            add("Τιμή σε σχέση με SMA200", "Κάτω",
+                f"Η τιμή ({close:.2f}) είναι κάτω από τον μέσο όρο 200 ημερών ({s200:.2f}): "
+                "μακροπρόθεσμα καθοδικό «κλίμα».", 7, "bearish")
 
     # --- MACD ---
-    m, sig = last["MACD"], last["MACD_signal"]
-    if np.isnan(m) or np.isnan(sig):
-        macd_txt = "Δεν υπάρχουν αρκετά δεδομένα ακόμα."
-        macd_val = "—"
-    elif m > sig:
-        macd_txt = ("Η γραμμή MACD είναι πάνω από τη γραμμή «signal». Αυτό είναι ανοδικό σήμα: "
-                    "το μομέντουμ (η «φόρα») της μετοχής στρέφεται προς τα πάνω.")
-        macd_val = "Ανοδικό"
-    else:
-        macd_txt = ("Η γραμμή MACD είναι κάτω από τη γραμμή «signal». Αυτό είναι καθοδικό σήμα: "
-                    "η «φόρα» της μετοχής στρέφεται προς τα κάτω.")
-        macd_val = "Καθοδικό"
-    items.append(("MACD (φόρα/μομέντουμ)", macd_val, macd_txt))
+    m, sig = last.get("MACD", np.nan), last.get("MACD_signal", np.nan)
+    if not (np.isnan(m) or np.isnan(sig)):
+        if m > sig:
+            add("MACD (φόρα/μομέντουμ)", "Ανοδικό",
+                "Η γραμμή MACD είναι πάνω από τη «signal»: το μομέντουμ (η «φόρα») στρέφεται προς τα πάνω.",
+                7, "bullish")
+        else:
+            add("MACD (φόρα/μομέντουμ)", "Καθοδικό",
+                "Η γραμμή MACD είναι κάτω από τη «signal»: η «φόρα» στρέφεται προς τα κάτω.",
+                7, "bearish")
 
     # --- Bollinger Bands ---
-    bb_up, bb_low, bb_mid = last["BB_up"], last["BB_low"], last["BB_mid"]
-    if np.isnan(bb_up) or np.isnan(bb_low):
-        bb_txt = "Δεν υπάρχουν αρκετά δεδομένα ακόμα."
-        bb_val = "—"
-    elif close > bb_up:
-        bb_txt = ("Η τιμή ξεπέρασε την πάνω «μπάντα» Bollinger. Συνήθως σημαίνει ότι ανέβηκε "
-                  "πολύ απότομα και ίσως «επιστρέψει» λίγο προς τα κάτω για να ισορροπήσει.")
-        bb_val = "Πάνω μπάντα"
-    elif close < bb_low:
-        bb_txt = ("Η τιμή έπεσε κάτω από την κάτω «μπάντα» Bollinger. Συνήθως σημαίνει ότι έπεσε "
-                  "πολύ απότομα και ίσως «αναπηδήσει» λίγο προς τα πάνω.")
-        bb_val = "Κάτω μπάντα"
-    else:
-        bb_txt = (f"Η τιμή κινείται ανάμεσα στις δύο μπάντες (γύρω από το μέσο {bb_mid:.2f}). "
-                  "Αυτό είναι το «κανονικό» εύρος — καμία ακραία κίνηση αυτή τη στιγμή.")
-        bb_val = "Εντός εύρους"
-    items.append(("Bollinger Bands (εύρος τιμής)", bb_val, bb_txt))
+    bb_up, bb_low, bb_mid = last.get("BB_up", np.nan), last.get("BB_low", np.nan), last.get("BB_mid", np.nan)
+    if not (np.isnan(bb_up) or np.isnan(bb_low)):
+        if close > bb_up:
+            add("Bollinger Bands (εύρος τιμής)", "Πάνω μπάντα",
+                "Η τιμή ξεπέρασε την πάνω μπάντα: ανέβηκε απότομα και ίσως «επιστρέψει» λίγο προς τα κάτω.",
+                7, "bearish")
+        elif close < bb_low:
+            add("Bollinger Bands (εύρος τιμής)", "Κάτω μπάντα",
+                "Η τιμή έπεσε κάτω από την κάτω μπάντα: έπεσε απότομα και ίσως «αναπηδήσει» προς τα πάνω.",
+                7, "bullish")
+        else:
+            add("Bollinger Bands (εύρος τιμής)", "Εντός εύρους",
+                f"Η τιμή κινείται ανάμεσα στις μπάντες (γύρω από το μέσο {bb_mid:.2f}): κανονικό εύρος, "
+                "καμία ακραία κίνηση τώρα.", 3, "neutral")
 
-    # --- ATR ---
-    a = last["ATR"]
-    if np.isnan(a):
-        atr_txt = "Δεν υπάρχουν αρκετά δεδομένα ακόμα."
-        atr_val = "—"
-    else:
+    # --- ADX (δύναμη τάσης) ---
+    ax = last.get("ADX", np.nan)
+    if not np.isnan(ax):
+        dip, dim = last.get("DI_plus", np.nan), last.get("DI_minus", np.nan)
+        if ax > 25:
+            direction = "ανοδική" if dip > dim else "καθοδική"
+            add("ADX (δύναμη τάσης)", f"{ax:.0f}",
+                f"Το ADX είναι {ax:.0f} (>25): υπάρχει ισχυρή {direction} τάση — η κίνηση έχει «καύσιμο» "
+                "και δεν είναι απλώς θόρυβος.", 8, "bullish" if dip > dim else "bearish")
+        else:
+            add("ADX (δύναμη τάσης)", f"{ax:.0f}",
+                f"Το ADX είναι {ax:.0f} (<25): αδύναμη ή ανύπαρκτη τάση — η τιμή μάλλον κινείται "
+                "πλάγια, χωρίς ξεκάθαρη κατεύθυνση.", 5, "neutral")
+
+    # --- Stochastic ---
+    k = last.get("STOCH_K", np.nan)
+    if not np.isnan(k):
+        if k > 80:
+            add("Stochastic (ταχύτητα)", f"{k:.0f}",
+                f"Το Stochastic είναι {k:.0f} (>80): υπεραγορασμένη ζώνη — πιθανή κόπωση της ανόδου.",
+                6, "bearish")
+        elif k < 20:
+            add("Stochastic (ταχύτητα)", f"{k:.0f}",
+                f"Το Stochastic είναι {k:.0f} (<20): υπερπουλημένη ζώνη — πιθανή ανάκαμψη.",
+                6, "bullish")
+        else:
+            add("Stochastic (ταχύτητα)", f"{k:.0f}",
+                f"Το Stochastic είναι {k:.0f}: ουδέτερη ζώνη, χωρίς ακραίο σήμα.", 2, "neutral")
+
+    # --- MFI (money flow) ---
+    mf = last.get("MFI", np.nan)
+    if not np.isnan(mf):
+        if mf > 80:
+            add("MFI (ροή χρήματος)", f"{mf:.0f}",
+                f"Το MFI είναι {mf:.0f} (>80): υπερβολική εισροή χρήματος — προσοχή σε πιθανή διόρθωση.",
+                6, "bearish")
+        elif mf < 20:
+            add("MFI (ροή χρήματος)", f"{mf:.0f}",
+                f"Το MFI είναι {mf:.0f} (<20): υπερβολική εκροή χρήματος — πιθανή ανάκαμψη.",
+                6, "bullish")
+        else:
+            add("MFI (ροή χρήματος)", f"{mf:.0f}",
+                f"Το MFI είναι {mf:.0f}: ισορροπημένη ροή χρήματος, χωρίς ακραίο σήμα.", 2, "neutral")
+
+    # --- CCI ---
+    c = last.get("CCI", np.nan)
+    if not np.isnan(c):
+        if c > 100:
+            add("CCI (ορμή)", f"{c:.0f}",
+                f"Το CCI είναι {c:.0f} (>100): ισχυρή ανοδική ορμή, αλλά και πιθανή υπεραγορά.", 5, "bullish")
+        elif c < -100:
+            add("CCI (ορμή)", f"{c:.0f}",
+                f"Το CCI είναι {c:.0f} (<-100): ισχυρή καθοδική ορμή, αλλά και πιθανή υπερπώληση.", 5, "bearish")
+        else:
+            add("CCI (ορμή)", f"{c:.0f}",
+                f"Το CCI είναι {c:.0f}: εντός κανονικού εύρους (±100).", 2, "neutral")
+
+    # --- Williams %R ---
+    w = last.get("WILLR", np.nan)
+    if not np.isnan(w):
+        if w > -20:
+            add("Williams %R", f"{w:.0f}",
+                f"Το Williams %R είναι {w:.0f} (>-20): υπεραγορασμένη — πιθανή κόπωση.", 5, "bearish")
+        elif w < -80:
+            add("Williams %R", f"{w:.0f}",
+                f"Το Williams %R είναι {w:.0f} (<-80): υπερπουλημένη — πιθανή ανάκαμψη.", 5, "bullish")
+
+    # --- ROC (momentum) ---
+    rc = last.get("ROC", np.nan)
+    if not np.isnan(rc):
+        strong = abs(rc) > 8
+        add("ROC (ορμή τιμής)", f"{rc:+.1f}%",
+            f"Η τιμή {'ανέβηκε' if rc > 0 else 'έπεσε'} {abs(rc):.1f}% σε ~2 εβδομάδες — "
+            f"{'έντονη' if strong else 'ήπια'} {'θετική' if rc > 0 else 'αρνητική'} ορμή.",
+            6 if strong else 3, "bullish" if rc > 0 else "bearish")
+
+    # --- OBV (τάση όγκου) ---
+    ob, obe = last.get("OBV", np.nan), last.get("OBV_ema", np.nan)
+    if not (np.isnan(ob) or np.isnan(obe)):
+        if ob > obe:
+            add("OBV (όγκος)", "Ανοδικό",
+                "Ο συσσωρευμένος όγκος (OBV) ανεβαίνει: ο όγκος συναλλαγών στηρίζει την άνοδο — καλό σημάδι.",
+                5, "bullish")
+        else:
+            add("OBV (όγκος)", "Καθοδικό",
+                "Ο συσσωρευμένος όγκος (OBV) πέφτει: ο όγκος στηρίζει την πτώση.", 5, "bearish")
+
+    # --- CMF ---
+    cm = last.get("CMF", np.nan)
+    if not np.isnan(cm):
+        if cm > 0.05:
+            add("CMF (πίεση αγοράς)", f"{cm:+.2f}",
+                f"Το CMF είναι {cm:+.2f} (θετικό): επικρατεί πίεση αγοράς — τα «έξυπνα» χρήματα μπαίνουν.",
+                4, "bullish")
+        elif cm < -0.05:
+            add("CMF (πίεση αγοράς)", f"{cm:+.2f}",
+                f"Το CMF είναι {cm:+.2f} (αρνητικό): επικρατεί πίεση πώλησης.", 4, "bearish")
+
+    # --- ATR (μεταβλητότητα) ---
+    a = last.get("ATR", np.nan)
+    if not np.isnan(a):
         pct = a / close * 100 if close else 0
         if pct > 4:
-            level = "υψηλή"
-            extra = "Η μετοχή κινείται έντονα — μεγαλύτερο ρίσκο αλλά και μεγαλύτερες ευκαιρίες."
+            level, extra, imp = "υψηλή", "Κινείται έντονα — μεγαλύτερο ρίσκο αλλά και ευκαιρίες.", 5
         elif pct > 2:
-            level = "μέτρια"
-            extra = "Φυσιολογικές καθημερινές διακυμάνσεις."
+            level, extra, imp = "μέτρια", "Φυσιολογικές καθημερινές διακυμάνσεις.", 3
         else:
-            level = "χαμηλή"
-            extra = "Η μετοχή κινείται ήρεμα, με μικρές καθημερινές αλλαγές."
-        atr_txt = (f"Το ATR είναι {a:.2f}, δηλαδή περίπου {pct:.1f}% της τιμής. Δείχνει "
-                   f"{level} μεταβλητότητα — δηλαδή πόσο «νευρικά» κινείται η τιμή μέσα στην ημέρα. {extra}")
-        atr_val = f"{a:.2f}"
-    items.append(("ATR (μεταβλητότητα)", atr_val, atr_txt))
+            level, extra, imp = "χαμηλή", "Κινείται ήρεμα, με μικρές καθημερινές αλλαγές.", 3
+        add("ATR (μεταβλητότητα)", f"{a:.2f}",
+            f"Το ATR είναι {a:.2f} (~{pct:.1f}% της τιμής): {level} μεταβλητότητα — πόσο «νευρικά» "
+            f"κινείται η τιμή. {extra}", imp, "neutral")
 
-    return items
+    return out
+
+
+def explain_indicators(last, df, top_n: int = 5) -> list:
+    """Επιστρέφει μόνο τους top_n πιο σημαντικούς δείκτες για τη συγκεκριμένη αγορά,
+    ως λίστα από (τίτλος, τιμή, εξήγηση). Η ανάλυση γίνεται με ΟΛΟΥΣ τους δείκτες,
+    αλλά εμφανίζονται μόνο οι πιο κρίσιμοι αυτή τη στιγμή."""
+    allx = _all_indicator_explanations(last, last["Close"])
+    # Ταξινόμηση κατά σημαντικότητα (φθίνουσα), κρατάμε τους top_n
+    allx.sort(key=lambda d: d["importance"], reverse=True)
+    top = allx[:top_n]
+    return [(d["title"], d["value"], d["text"]) for d in top]
 
 
 def buy_hold_sell(score: int) -> dict:
@@ -731,8 +978,8 @@ if analyze or ticker:
                        help="Μέτρο μεταβλητότητας — μέσο εύρος κίνησης")
             cc4.metric("MACD", f"{last['MACD']:.2f}" if not np.isnan(last['MACD']) else "—")
 
-            st.subheader("Τι σημαίνει κάθε δείκτης για αυτή τη μετοχή")
-            st.caption("Κάθε δείκτης εξηγείται με απλά λόγια, βάσει της σημερινής του τιμής.")
+            st.subheader("Οι πιο σημαντικοί δείκτες αυτή τη στιγμή")
+            st.caption("Η ανάλυση γίνεται με 14+ δείκτες· εδώ εμφανίζονται οι 5 πιο κρίσιμοι για τη συγκεκριμένη επιλογή, με απλά λόγια.")
 
             for title, value, explanation in explain_indicators(last, df):
                 st.markdown(
