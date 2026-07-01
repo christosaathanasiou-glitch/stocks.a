@@ -679,16 +679,29 @@ if analyze or ticker:
 
         # ===== TAB 1: Γράφημα =====
         with tab_chart:
+            chart_type = st.radio(
+                "Τύπος γραφήματος",
+                ["Κεριά (candlesticks)", "Γραμμή"],
+                horizontal=True,
+                index=0,
+            )
+
             fig = make_subplots(
                 rows=4, cols=1, shared_xaxes=True,
                 row_heights=[0.5, 0.17, 0.17, 0.16], vertical_spacing=0.03,
                 subplot_titles=("Τιμή + Bollinger + SMA", "Volume", "RSI", "MACD"),
             )
-            # Candles
-            fig.add_trace(go.Candlestick(
-                x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"],
-                name="Τιμή", increasing_line_color="#1a9850", decreasing_line_color="#d73027",
-            ), row=1, col=1)
+            # Τιμή: κεριά ή απλή γραμμή, ανάλογα με την επιλογή
+            if chart_type.startswith("Κεριά"):
+                fig.add_trace(go.Candlestick(
+                    x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"],
+                    name="Τιμή", increasing_line_color="#1a9850", decreasing_line_color="#d73027",
+                ), row=1, col=1)
+            else:
+                fig.add_trace(go.Scatter(
+                    x=df.index, y=df["Close"], name="Τιμή (κλείσιμο)",
+                    line=dict(color="#111111", width=1.6),
+                ), row=1, col=1)
             for col, color, w in [("SMA50", "#2166ac", 1.2), ("SMA200", "#b2182b", 1.2), ("MA20", "#f1a340", 1)]:
                 fig.add_trace(go.Scatter(x=df.index, y=df[col], name=col, line=dict(color=color, width=w)), row=1, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df["BB_up"], name="BB up", line=dict(color="#888", width=0.7, dash="dot"), showlegend=False), row=1, col=1)
