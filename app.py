@@ -425,6 +425,12 @@ st.markdown("""
     .main-title { font-size: 2.2rem; font-weight: 800; margin-bottom: 0; }
     .subtitle { color: #888; margin-top: 0; }
     div[data-testid="stMetricValue"] { font-size: 1.4rem; }
+    /* Κρύβει το πάνω-δεξιά μενού (☰), την κεφαλίδα και το footer του Streamlit */
+    #MainMenu { visibility: hidden; }
+    header { visibility: hidden; }
+    footer { visibility: hidden; }
+    div[data-testid="stToolbar"] { visibility: hidden; }
+    div[data-testid="stDecoration"] { display: none; }
 </style>
 """, unsafe_allow_html=True)
 
